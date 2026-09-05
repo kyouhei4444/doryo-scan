@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#3b2a12">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>土量スキャナ</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header id="topbar">
+  <div class="tb-main">
+    <div class="tb-title">土量スキャナ</div>
+    <div class="tb-sub" id="tb-sub">スマホのカメラで土砂の体積を測る</div>
+  </div>
+  <button id="btn-help" class="tb-btn" title="使い方">?</button>
+</header>
+
+<main>
+
+<!-- ================= 計測 ================= -->
+<section id="view-scan" class="view active">
+  <div class="pad">
+
+    <div class="card" id="cap-card">
+      <div class="card-h">端末の対応状況</div>
+      <ul class="caps" id="caps"><li class="chk wait">確認中…</li></ul>
+      <div id="cap-note" class="note hidden"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-h">何を測りますか</div>
+      <div class="seg" id="seg-side">
+        <button data-v="fill" class="on">土砂の山（盛土）</button>
+        <button data-v="cut">掘削した穴・溝</button>
+        <button data-v="auto">おまかせ</button>
+      </div>
+      <div class="seg mt" id="seg-preset">
+        <button data-v="fine">細かく<span>2cm格子・近距離</span></button>
+        <button data-v="std" class="on">標準<span>5cm格子・5mまで</span></button>
+        <button data-v="wide">広く<span>10cm格子・8mまで</span></button>
+      </div>
+      <p class="note mt">
+        「細かく」は 1m 以下の小さいもの向け。「広く」は大きな山向けですが、
+        遠いところほど深度の誤差が大きくなります。
+      </p>
+    </div>
+
+    <button id="btn-start" class="btn big primary" disabled>スキャンを開始</button>
+    <div id="start-err" class="err hidden"></div>
+
+    <div class="card mt">
+      <div class="card-h">撮りかた（これで精度が決まります）</div>
+      <ol class="howto">
+        <li><b>まず地面から。</b>土砂の周りの平らな地面を、ぐるっと 1 周ぶん先に映します。ここが基準面になります。</li>
+        <li><b>次に土砂本体。</b>1〜3m くらい離れて、山の上・中・下を撫でるように<b>ゆっくり</b>動かします。</li>
+        <li><b>ぐるりと回る。</b>反対側にも回り込みます。裏側が撮れていないと、その分は周りから補間した推定値になります。</li>
+        <li>画面の点が<b>灰色＝地面 / 青〜赤＝高いところ</b>です。色が付いていない場所が撮り漏れです。</li>
+        <li>掘削の穴は、<b>穴のふちの地面</b>を先に映してから、上から覗き込むように底を映します。</li>
+      </ol>
+    </div>
+
+  </div>
+</section>
+
+<!-- ================= 結果 ================= -->
+<section id="view-result" class="view">
+  <div id="res-empty" class="pad empty">
+    まだ結果がありません。<br>「計測」タブからスキャンしてください。
+  </div>
+
+  <div id="res-body" class="hidden">
+    <div class="bigbox">
+      <div class="big-label" id="res-kind">体積</div>
+      <div class="big-val"><b id="res-vol">—</b><span>m³</span></div>
+      <div class="big-sub" id="res-range">—</div>
+    </div>
+
+    <div class="kpis">
+      <div class="kpi"><span>対象面積</span><b id="res-area">—</b></div>
+      <div class="kpi"><span>最大高さ</span><b id="res-hmax">—</b></div>
+      <div class="kpi"><span>平均高さ</span><b id="res-hmean">—</b></div>
+      <div class="kpi"><span>格子</span><b id="res-cells">—</b></div>
+    </div>
+
+    <div id="side-switch" class="row-btns hidden">
+      <button id="btn-side-fill" class="btn tiny">土量（基準面より上）</button>
+      <button id="btn-side-cut" class="btn tiny">掘削量（基準面より下）</button>
+    </div>
+
+    <div id="res-warn"></div>
+
+    <div class="card">
+      <div class="card-h">平面図（真上から見た図）</div>
+      <div class="seg sm" id="seg-map">
+        <button data-v="pan" class="on">移動・拡大</button>
+        <button data-v="poly">範囲を囲む</button>
+        <button data-v="section">断面線</button>
+      </div>
+      <div class="canvas-wrap"><canvas id="map"></canvas></div>
+      <div class="row-btns sm">
+        <button id="btn-poly-clear" class="btn tiny">囲みを消す</button>
+        <button id="btn-poly-undo" class="btn tiny">1つ戻す</button>
+        <button id="btn-fit" class="btn tiny">全体表示</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-h">基準面の調整</div>
+      <label class="fld">
+        <span>基準面の上下 <b id="lbl-off">0 cm</b></span>
+        <input type="range" id="rng-off" min="-100" max="100" step="1" value="0">
+      </label>
+      <p class="note">
+        山の天端を地面と間違えているときや、地面が少ししか写っていないときに動かします。
+        右へ動かすと基準面が上がり、体積は減ります。
+      </p>
+      <label class="fld">
+        <span>対象とみなす比高 <b id="lbl-thr">5 cm</b></span>
+        <input type="range" id="rng-thr" min="1" max="50" step="1" value="5">
+      </label>
+      <div class="row-btns">
+        <button id="btn-plane-manual" class="btn tiny">スキャン中に拾った地面の点を使う</button>
+        <button id="btn-plane-auto" class="btn tiny">自動に戻す</button>
+      </div>
+      <div id="plane-info" class="note"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-h">断面図</div>
+      <div class="canvas-wrap short"><canvas id="sect"></canvas></div>
+      <p class="note">平面図で「断面線」を選び、図の上を指でなぞると断面が出ます。</p>
+    </div>
+
+    <div class="card">
+      <div class="card-h">土量の換算</div>
+      <label class="fld"><span>いま測ったのは</span>
+        <select id="sel-measured">
+          <option value="loose">ほぐし土量（積んである残土・掘り出した土）</option>
+          <option value="bank">地山土量（掘削前の地面・締まった地盤）</option>
+          <option value="comp">締固め土量（転圧した盛土）</option>
+        </select>
+      </label>
+      <div class="two">
+        <label class="fld"><span>ほぐし率 L</span><input type="number" id="in-L" step="0.01" min="0.5" max="2"></label>
+        <label class="fld"><span>締固め率 C</span><input type="number" id="in-C" step="0.01" min="0.5" max="2"></label>
+      </div>
+      <table class="tbl" id="tbl-conv"></table>
+      <label class="fld"><span>ダンプ1台の積載量（ほぐし m³）</span>
+        <input type="number" id="in-dump" step="0.1" min="0.5"></label>
+      <div class="dump" id="res-dump">—</div>
+      <p class="note">L・C は土質で変わります。設計値がある工事では、必ず設計書の値を入れてください。</p>
+    </div>
+
+    <div class="card">
+      <div class="card-h">保存・書き出し</div>
+      <label class="fld"><span>名前</span><input type="text" id="in-name" placeholder="例）1号ヤード 残土 10/5"></label>
+      <label class="fld"><span>メモ</span><input type="text" id="in-memo" placeholder="測定条件・立会者など"></label>
+      <div class="row-btns">
+        <button id="btn-save" class="btn primary">この端末に保存</button>
+        <button id="btn-png" class="btn">結果を画像で保存</button>
+      </div>
+      <div class="row-btns">
+        <button id="btn-ply" class="btn">点群 PLY</button>
+        <button id="btn-cloudcsv" class="btn">点群 CSV</button>
+        <button id="btn-gridcsv" class="btn">格子 CSV</button>
+      </div>
+      <div class="row-btns">
+        <button id="btn-sectcsv" class="btn">断面 CSV</button>
+        <button id="btn-json" class="btn">計算条件 JSON</button>
+      </div>
+    </div>
+
+    <div class="card warnbox">
+      <div class="card-h">この数字の使いかた</div>
+      <p>スマホの深度は、正しく撮れた条件でも <b>数%〜10数%</b> の誤差が出ます。
+      日々の進捗管理・ダンプ台数の見積り・残土量の目安には十分ですが、
+      <b>出来形数量や数量変更の根拠にする場合は、必ず監督員と計測方法を協議してください。</b></p>
+      <p>「設定」タブの<b>検証</b>で、寸法の分かっている箱などを測って、実際の誤差を確かめてから使うことをおすすめします。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 一覧 ================= -->
+<section id="view-list" class="view">
+  <div class="pad">
+    <div id="list"></div>
+    <div class="row-btns mt">
+      <button id="btn-list-clear" class="btn danger">保存をすべて消す</button>
+    </div>
+    <div id="usage" class="note"></div>
+  </div>
+</section>
+
+<!-- ================= 設定 ================= -->
+<section id="view-cfg" class="view">
+  <div class="pad">
+
+    <div class="card">
+      <div class="card-h">検証（まずこれをやってください）</div>
+      <p class="note">寸法の分かっているもの（コンテナ・箱・一斗缶など）を平らな床に置いて測り、
+      実際の体積と比べます。ここで出た誤差が、その端末での実力です。</p>
+      <div class="two">
+        <label class="fld"><span>本当の体積 (m³)</span><input type="number" id="ck-true" step="0.001" min="0"></label>
+        <label class="fld"><span>測った体積 (m³)</span><input type="number" id="ck-meas" step="0.001" min="0"></label>
+      </div>
+      <button id="btn-check" class="btn">誤差を計算</button>
+      <div id="ck-out" class="dump">—</div>
+      <div id="ck-log"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-h">スキャン</div>
+      <label class="fld"><span>格子の大きさ <b id="lbl-cs"></b></span>
+        <input type="range" id="cf-cs" min="1" max="20" step="1"></label>
+      <label class="fld"><span>使う深度の上限 <b id="lbl-dmax"></b></span>
+        <input type="range" id="cf-dmax" min="2" max="10" step="0.5"></label>
+      <label class="fld"><span>1回に読む画素数 <b id="lbl-samp"></b></span>
+        <input type="range" id="cf-samp" min="1000" max="20000" step="500"></label>
+      <label class="fld"><span>1秒あたりの取り込み回数 <b id="lbl-rate"></b></span>
+        <input type="range" id="cf-rate" min="2" max="30" step="1"></label>
+      <label class="fld"><span>深度の種類</span>
+        <select id="cf-dtype">
+          <option value="smooth">平滑（穴が少ない・既定）</option>
+          <option value="raw">生（縁がシャープ・対応端末のみ）</option>
+        </select></label>
+      <label class="fld"><span>速く動かしたときに捨てる速度 <b id="lbl-spd"></b></span>
+        <input type="range" id="cf-spd" min="0.5" max="4" step="0.1"></label>
+    </div>
+
+    <div class="card">
+      <div class="card-h">計算</div>
+      <label class="fld"><span>有効セルの最小観測回数 <b id="lbl-mcnt"></b></span>
+        <input type="range" id="cf-mcnt" min="1" max="10" step="1"></label>
+      <label class="fld"><span>基準面として許す傾き <b id="lbl-tilt"></b></span>
+        <input type="range" id="cf-tilt" min="3" max="45" step="1"></label>
+      <label class="chk-l"><input type="checkbox" id="cf-largest"> いちばん大きい塊だけ集計する</label>
+      <label class="chk-l"><input type="checkbox" id="cf-holes"> 内側の未計測セルを周りから補間する</label>
+      <label class="chk-l"><input type="checkbox" id="cf-smooth"> 高さのノイズを 3×3 メディアンでならす</label>
+      <label class="chk-l"><input type="checkbox" id="cf-closing"> 領域の 1 格子の切れ目・穴を閉じる</label>
+      <p class="note">下 2 つは、深度が荒れているときに対象が細切れになって体積が小さく出るのを防ぎます。
+      検証（円錐・深度ノイズ σ=4%）では、これを切ると誤差が −68%、入れると −7% でした。特別な理由がなければ入れたままにしてください。</p>
+    </div>
+
+    <div class="card">
+      <div class="card-h">保存</div>
+      <div id="usage2" class="note"></div>
+      <div class="row-btns">
+        <button id="btn-reset" class="btn">設定を初期値に戻す</button>
+      </div>
+      <p class="note">版 1.0 ／ 使い方は右上の ? から。</p>
+    </div>
+
+  </div>
+</section>
+
+</main>
+
+<nav id="tabs">
+  <button data-v="scan" class="on"><i>◎</i>計測</button>
+  <button data-v="result"><i>▤</i>結果</button>
+  <button data-v="list"><i>≡</i>一覧</button>
+  <button data-v="cfg"><i>⚙</i>設定</button>
+</nav>
+
+<!-- ================= AR中の重ね表示 ================= -->
+<div id="ar-overlay" class="hidden">
+  <div id="ar-top">
+    <div class="ar-stat"><span>格子</span><b id="ar-cells">0</b></div>
+    <div class="ar-stat"><span>点</span><b id="ar-pts">0</b></div>
+    <div class="ar-stat"><span>深度</span><b id="ar-valid">—</b></div>
+    <div class="ar-stat"><span>秒</span><b id="ar-time">0</b></div>
+  </div>
+  <div id="ar-speed" class="ar-flag hidden">ゆっくり動かしてください</div>
+  <div id="ar-cross"></div>
+  <div id="ar-toast" class="hidden"></div>
+  <div id="ar-bottom">
+    <div class="ar-tools" id="ar-tools">
+      <button data-v="none" class="on">スキャン</button>
+      <button data-v="ground">地面点</button>
+      <button data-v="measure">距離</button>
+      <button data-v="bound">範囲</button>
+    </div>
+    <div class="ar-btns">
+      <button id="ar-undo">1つ戻す</button>
+      <button id="ar-pause">一時停止</button>
+      <button id="ar-done" class="prim">計測おわり</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= 使い方 ================= -->
+<div id="help" class="modal hidden">
+  <div class="modal-in">
+    <div class="modal-h">使い方<button id="help-x">✕</button></div>
+    <div class="modal-b">
+      <h3>このアプリがやっていること</h3>
+      <p>Android の Chrome から <b>ARCore の深度センシング</b>を呼び出し、
+      カメラが見ている面までの距離を毎秒何万点も読み取って、世界座標の点群にします。
+      そのあと土木の<b>点高法（メッシュ法）</b>と同じ計算で体積を出します。</p>
+      <ol>
+        <li>土砂の周りの地面から<b>基準面</b>（平らな面）を最小二乗で当てはめる</li>
+        <li>対象を格子に切り、格子ごとに基準面からの<b>比高</b>を出す</li>
+        <li><b>体積＝Σ（比高 × 格子面積）</b></li>
+      </ol>
+      <p>比高が正なら土量（山）、負なら掘削量（穴）です。同じ計算で両方出ます。</p>
+
+      <h3>精度について（大事）</h3>
+      <p>スマホの深度は、ToF センサーの無い機種ではカメラを動かした<b>視差</b>から作っています。
+      1 点ごとの誤差は距離の数%あり、5m を超えると急に荒くなります。
+      たくさんの点を平均するので体積の誤差はそれより小さくなりますが、
+      <b>撮り漏れ・基準面のずれ・端末の位置ずれ（ドリフト）</b>が効いてきます。</p>
+      <ul>
+        <li>1 周歩いて撮った小〜中規模の山：おおむね <b>数%〜10数%</b></li>
+        <li>裏側が撮れていない・遠くから撮った：<b>もっと外れます</b></li>
+        <li>10m を超える大きな山：歩く距離が長くなるほど位置ずれが効くので、
+            <b>ドローン写真測量やTS・GNSSでの検測</b>を使ってください</li>
+      </ul>
+      <p><b>出来形数量や数量変更の根拠にする場合は、必ず監督員と計測方法を協議してください。</b>
+      設計変更の数量根拠として使えるかは発注者の判断です。</p>
+
+      <h3>うまく撮るコツ</h3>
+      <ul>
+        <li><b>ゆっくり</b>動かす。速く振ると深度が出ません（画面上部に警告が出ます）</li>
+        <li>のっぺりした面（真っ黒な土、水たまり、逆光）は苦手です。明るい時間に撮る</li>
+        <li>1〜3m の距離が一番安定します。近すぎ（30cm 未満）は取れません</li>
+        <li>地面を先に、広めに撮る。基準面がずれると体積は丸ごとずれます</li>
+        <li>雨天・濃霧・強い直射日光の照り返しは苦手です</li>
+      </ul>
+
+      <h3>画面の色</h3>
+      <ul>
+        <li><b>灰色</b>＝基準面の近く（＝地面とみなした場所）</li>
+        <li><b>青→水→緑→黄→赤</b>＝基準面より高い（山）。赤ほど高い</li>
+        <li><b>紫</b>＝基準面より低い（穴）</li>
+      </ul>
+
+      <h3>AR 画面のボタン</h3>
+      <ul>
+        <li><b>スキャン</b>：ふつうに撮るだけ</li>
+        <li><b>地面点</b>：画面中央を地面に合わせてタップ。3 点以上拾うと、それだけで基準面を作れます（地面が狭いときに有効）</li>
+        <li><b>距離</b>：2 点タップで実距離。<b>コンベックスで測った長さと比べて、その端末の精度を確認できます</b></li>
+        <li><b>範囲</b>：山の法尻をタップで囲むと、その中だけを集計します</li>
+      </ul>
+
+      <h3>ホーム画面に追加</h3>
+      <p>Android の Chrome でこのページを開き、右上のメニューから
+      「アプリをインストール」または「ホーム画面に追加」を選ぶと、
+      ふつうのアプリと同じアイコンで起動できます。</p>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="hidden"></div>
+
+<script src="js/geom.js"></script>
+<script src="js/grid.js"></script>
+<script src="js/volume.js"></script>
+<script src="js/scan.js"></script>
+<script src="js/render.js"></script>
+<script src="js/store.js"></script>
+<script src="js/exporter.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

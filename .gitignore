@@ -1,0 +1,9 @@
+# テストが一時的に作るページ（test/run-flow.ps1 が index.html から組み立てる）
+_flowtest.html
+_smoke.html
+
+# OS・エディタ
+Thumbs.db
+desktop.ini
+.DS_Store
+*.swp

@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>土量スキャナ 検証</title>
+<style>
+ body{font-family:"Consolas","Menlo",monospace;font-size:13px;margin:14px;background:#fff;color:#14202b}
+ h1{font-size:16px}
+ pre{white-space:pre-wrap;line-height:1.5}
+ table{border-collapse:collapse;font-size:12.5px;margin-top:10px;width:100%}
+ th,td{border:1px solid #c9d2da;padding:4px 7px;text-align:left}
+ th{background:#eef1f4}
+ td.n{text-align:right;font-variant-numeric:tabular-nums}
+ .ok{color:#1f7a3d;font-weight:700}
+ .ng{color:#b02020;font-weight:700}
+ #sum{font-size:15px;font-weight:700;margin-top:12px;padding:10px;border-radius:8px}
+ #sum.pass{background:#e6f6ec;color:#1f7a3d}
+ #sum.fail{background:#fdeaea;color:#b02020}
+</style>
+</head>
+<body>
+<h1>土量スキャナ 計算部の検証</h1>
+<pre id="log">実行中…</pre>
+<div id="tbl"></div>
+<div id="sum"></div>
+
+<script src="../js/geom.js"></script>
+<script src="../js/grid.js"></script>
+<script src="../js/volume.js"></script>
+<script>
+  var LOG = [];
+  window.TOUT = function (s) { LOG.push(s); };
+</script>
+<script src="cases.js"></script>
+<script>
+(function () {
+  document.getElementById('log').textContent = LOG.join('\n');
+  var R = window.TRESULT || { rows: [], fails: 99 };
+  var h = '<table><tr><th></th><th>項目</th><th>理論値</th><th>計算値</th><th>差</th><th>許容</th><th>備考</th></tr>';
+  R.rows.forEach(function (r) {
+    h += '<tr><td class="' + (r[0] ? 'ok">OK' : 'ng">NG') + '</td><td>' + r[1] + '</td>'
+       + '<td class="n">' + r[2] + '</td><td class="n">' + r[3] + '</td>'
+       + '<td class="n">' + r[4] + '</td><td class="n">' + r[5] + '</td><td>' + (r[6] || '') + '</td></tr>';
+  });
+  document.getElementById('tbl').innerHTML = h + '</table>';
+  var s = document.getElementById('sum');
+  s.className = R.fails === 0 ? 'pass' : 'fail';
+  s.textContent = R.fails === 0
+    ? 'RESULT PASS  全 ' + R.rows.length + ' 項目 合格'
+    : 'RESULT FAIL  ' + R.fails + ' 項目 不合格 / 全 ' + R.rows.length + ' 項目';
+})();
+</script>
+</body>
+</html>

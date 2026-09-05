@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>描画部のスモークテスト</title>
+<style>
+ body{font-family:system-ui,monospace;margin:12px}
+ canvas{border:1px solid #999;display:block;margin:8px 0}
+ #map{width:520px;height:400px}
+ #sect{width:520px;height:200px}
+ pre{background:#f4f6f8;padding:10px;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<h1>描画部のスモークテスト</h1>
+<canvas id="map"></canvas>
+<canvas id="sect"></canvas>
+<pre id="out">実行中…</pre>
+
+<script src="../js/geom.js"></script>
+<script src="../js/grid.js"></script>
+<script src="../js/volume.js"></script>
+<script src="../js/render.js"></script>
+<script src="../js/exporter.js"></script>
+<script src="../js/scan.js"></script>
+<script>
+(function () {
+  var log = [], errs = [];
+  window.addEventListener('error', function (e) { errs.push(e.message + ' @' + e.filename + ':' + e.lineno); });
+  function T(s) { log.push(s); }
+  function must(name, fn) {
+    try { var r = fn(); T('OK  ' + name + (r === undefined ? '' : '  → ' + r)); return true; }
+    catch (e) { errs.push(name + ': ' + e.message + '\n' + e.stack); T('NG  ' + name + ': ' + e.message); return false; }
+  }
+
+  // --- 円錐の格子を合成（実カメラの代わり） ---
+  var grid = new HGrid(0.04);
+  var R = 1.6, H = 1.1;
+  for (var i = 0; i < 200000; i++) {
+    var x = (Math.random() - 0.5) * 8, z = (Math.random() - 0.5) * 8;
+    var r = Math.sqrt(x*x + z*z);
+    var y = r < R ? H * (1 - r/R) : 0;
+    grid.add(x, y + (Math.random()-0.5)*0.01, z);
+  }
+  var res = null;
+  must('Volume.compute', function () {
+    res = Volume.compute(grid, { thr: 0.05, minCnt: 1, side: 'auto', maxTilt: 20 });
+    if (res.error) throw new Error(res.error);
+    return res.main.vol.toFixed(3) + ' m3 / 警告 ' + res.warn.length + '件 / σ=' + (res.sigma*100).toFixed(2) + 'cm';
+  });
+
+  var mv = null;
+  must('MapView 生成と描画', function () {
+    mv = new Render.MapView(document.getElementById('map'));
+    mv.setResult(res);
+    return mv.cv.width + '×' + mv.cv.height + ' 画素 / 縮尺 ' + mv.scale.toFixed(1) + ' px/m';
+  });
+
+  must('平面図が白紙でないこと', function () {
+    var cv = document.getElementById('map');
+    var d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+    var colors = {}, n = 0;
+    for (var k = 0; k < d.length; k += 4 * 37) {
+      colors[d[k] + ',' + d[k+1] + ',' + d[k+2]] = 1; n++;
+    }
+    var c = Object.keys(colors).length;
+    if (c < 8) throw new Error('色数が ' + c + ' 種類しかありません（描けていない疑い）');
+    return c + ' 色 / ' + n + ' 画素を確認';
+  });
+
+  must('世界座標 ↔ 画面座標 の往復', function () {
+    var worst = 0;
+    for (var k = 0; k < 500; k++) {
+      var x = (Math.random()-0.5)*8, z = (Math.random()-0.5)*8;
+      var s = mv.w2s(x, z), w = mv.s2w(s.x, s.y);
+      worst = Math.max(worst, Math.abs(w.x-x), Math.abs(w.z-z));
+    }
+    if (worst > 1e-9) throw new Error('往復誤差 ' + worst);
+    return '最大 ' + worst.toExponential(1) + ' m';
+  });
+
+  must('断面の切り出しと描画', function () {
+    var p = Volume.profile(res, { x: -2.2, z: 0 }, { x: 2.2, z: 0 }, 200);
+    if (!p || !p.length) throw new Error('断面が取れません');
+    var top = 0;
+    p.forEach(function (q) { if (q.h !== null && q.h > top) top = q.h; });
+    Render.drawSection(document.getElementById('sect'), p);
+    if (Math.abs(top - H) > 0.12) throw new Error('断面の頂部 ' + top.toFixed(3) + ' が高さ ' + H + ' と合いません');
+    return p.length + ' 点 / 頂部 ' + top.toFixed(3) + ' m（真値 ' + H + ' m）';
+  });
+
+  must('断面図が白紙でないこと', function () {
+    var cv = document.getElementById('sect');
+    var d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+    var colors = {};
+    for (var k = 0; k < d.length; k += 4 * 23) colors[d[k] + ',' + d[k+1] + ',' + d[k+2]] = 1;
+    var c = Object.keys(colors).length;
+    if (c < 4) throw new Error('色数が ' + c + ' 種類しかありません');
+    return c + ' 色';
+  });
+
+  must('多角形で囲んだときの再計算', function () {
+    mv.poly = [{x:-2,z:-2},{x:2,z:-2},{x:2,z:2},{x:-2,z:2}];
+    var r2 = Volume.compute(grid, { thr: 0.05, minCnt: 1, side: 'fill', maxTilt: 20, poly: mv.poly });
+    if (r2.error) throw new Error(r2.error);
+    mv.setResult(r2, true);
+    return '囲んだ体積 ' + r2.main.vol.toFixed(3) + ' m3';
+  });
+
+  must('拡大縮小のあとも描ける', function () {
+    mv.scale *= 2.3; mv.ox += 40; mv.draw();
+    mv.fit(); mv.draw();
+    return '縮尺 ' + mv.scale.toFixed(1);
+  });
+
+  must('土量換算', function () {
+    var c = Volume.convert(10, 'loose', 1.2, 0.9);
+    if (Math.abs(c.bank - 10/1.2) > 1e-9) throw new Error('地山換算が違います');
+    if (Math.abs(c.comp - (10/1.2)*0.9) > 1e-9) throw new Error('締固め換算が違います');
+    return '10m3(ほぐし) → 地山 ' + c.bank.toFixed(3) + ' / 締固め ' + c.comp.toFixed(3);
+  });
+
+  /* --- AR の描画シェーダ（実機でしか動かない部分）だけでもコンパイルを確かめる --- */
+  must('ARシェーダのコンパイルとリンク', function () {
+    var c = document.createElement('canvas');
+    var gl = c.getContext('webgl') || c.getContext('experimental-webgl');
+    if (!gl) throw new Error('WebGL が使えません（この環境では確認できません）');
+    var S = Scanner.SHADERS;
+    var vs = S.compile(gl, gl.VERTEX_SHADER, S.VS);
+    var fs = S.compile(gl, gl.FRAGMENT_SHADER, S.FS);
+    var p = gl.createProgram();
+    gl.attachShader(p, vs); gl.attachShader(p, fs); gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error('リンク失敗: ' + gl.getProgramInfoLog(p));
+    var miss = [];
+    ['uProj','uView','uPlane','uRange','uFlat','uSize','uRound'].forEach(function (u) {
+      if (gl.getUniformLocation(p, u) === null) miss.push(u);
+    });
+    if (gl.getAttribLocation(p, 'aPos') < 0) miss.push('aPos');
+    if (miss.length) throw new Error('見つからない変数: ' + miss.join(','));
+    return 'コンパイル・リンクとも成功 / 変数 8 個すべて確認';
+  });
+
+  /* --- 書き出しは Blob を横取りして中身まで確かめる --------------
+     Exporter の中の download() は外から差し替えられないので、
+     その 1 段下（URL.createObjectURL）で受け止める。
+     ついでに <a>.click() を空にして、実際のダウンロードは起こさない。 */
+  var caught = [];
+  var realCreate = URL.createObjectURL, realRevoke = URL.revokeObjectURL;
+  var realClick = HTMLAnchorElement.prototype.click;
+  URL.createObjectURL = function (b) { caught.push(b); return 'blob:stub-' + caught.length; };
+  URL.revokeObjectURL = function () {};
+  HTMLAnchorElement.prototype.click = function () {};
+
+  function grab(fn) { caught.length = 0; fn(); return caught[0] || null; }
+
+  var bGrid = grab(function () { Exporter.gridCsv(res, 'smoke'); });
+  var bCloudCsv, bPly, bSect, bPng;
+  var cloud = new VCloud(0.05, 100000);
+  for (var k = 0; k < 30000; k++) cloud.add(Math.random()*4-2, Math.random(), Math.random()*4-2);
+  bCloudCsv = grab(function () { Exporter.cloudCsv(cloud, 'smoke'); });
+  bPly      = grab(function () { Exporter.ply(cloud, 'smoke'); });
+  bSect     = grab(function () {
+    Exporter.sectionCsv(Volume.profile(res, {x:-2.2,z:0}, {x:2.2,z:0}, 100), 'smoke');
+  });
+
+  var pngDone = new Promise(function (done) {
+    caught.length = 0;
+    Exporter.png(document.getElementById('map'), ['行1', '行2', '行3'], 'テスト', 'smoke');
+    setTimeout(function () { bPng = caught[0] || null; done(); }, 400);
+  });
+
+  pngDone.then(function () {
+    return Promise.all([bGrid.text(), bCloudCsv.text(), bPly.arrayBuffer(), bSect.text()]);
+  }).then(function (r) {
+    var gridTxt = r[0], cloudTxt = r[1], plyBuf = r[2], sectTxt = r[3];
+
+    // 格子CSV: 体積寄与の列を足し直して、表示している体積と一致するか
+    must('格子CSV を足し直すと体積が一致する', function () {
+      var lines = gridTxt.split(/\r?\n/).filter(function (l) { return l && l.charAt(0) !== '#' && l.charAt(0) !== '﻿'; });
+      var head = lines.shift();
+      if (head.indexOf('体積寄与') < 0) throw new Error('見出しが違います: ' + head);
+      var sum = 0, n = 0;
+      lines.forEach(function (l) {
+        var c = l.split(',');
+        if (c.length < 8) return;
+        sum += parseFloat(c[4]) || 0; n++;
+      });
+      var want = res.main.sign > 0 ? res.main.vol : -res.main.vol;
+      if (Math.abs(sum - want) > 1e-3) throw new Error('CSVの合計 ' + sum.toFixed(4) + ' が体積 ' + want.toFixed(4) + ' と違います');
+      return n.toLocaleString() + ' 行 / 合計 ' + sum.toFixed(4) + ' m3（表示値 ' + want.toFixed(4) + '）';
+    });
+
+    must('点群CSV の行数と中身', function () {
+      var lines = cloudTxt.split(/\r?\n/).filter(function (l) { return l && l.charAt(0) !== '#'; });
+      if (lines[0] !== 'X,Y,Z') throw new Error('見出しが違います');
+      if (lines.length - 1 !== cloud.n) throw new Error('行数 ' + (lines.length-1) + ' が点数 ' + cloud.n + ' と違います');
+      var c = lines[1].split(',');
+      if (Math.abs(parseFloat(c[0]) - cloud.px[0]) > 5e-4) throw new Error('1点目の X が違います');
+      return cloud.n.toLocaleString() + ' 点';
+    });
+
+    must('PLY のヘッダと本体の長さ', function () {
+      var head = new TextDecoder().decode(new Uint8Array(plyBuf, 0, 300));
+      var m = head.match(/element vertex (\d+)/);
+      if (!m) throw new Error('element vertex がありません');
+      if (+m[1] !== cloud.n) throw new Error('宣言点数 ' + m[1] + ' が ' + cloud.n + ' と違います');
+      if (head.indexOf('binary_little_endian') < 0) throw new Error('format 行が違います');
+      // indexOf は「文字数」なので、バイト数に直してから本体の位置を出す
+      var hEnd = new TextEncoder().encode(head.slice(0, head.indexOf('end_header\n') + 11)).length;
+      if (plyBuf.byteLength - hEnd !== cloud.n * 12) {
+        throw new Error('本体 ' + (plyBuf.byteLength - hEnd) + ' バイトが ' + (cloud.n*12) + ' と違います');
+      }
+      var dv = new DataView(plyBuf, hEnd);
+      for (var i = 0; i < 3; i++) {
+        if (Math.abs(dv.getFloat32(i*12, true) - cloud.px[i]) > 1e-6) throw new Error((i+1) + '点目の X が違います');
+        if (Math.abs(dv.getFloat32(i*12+8, true) - cloud.pz[i]) > 1e-6) throw new Error((i+1) + '点目の Z が違います');
+      }
+      return cloud.n.toLocaleString() + ' 点 / ' + plyBuf.byteLength.toLocaleString() + ' bytes';
+    });
+
+    must('断面CSV', function () {
+      var lines = sectTxt.split(/\r?\n/).filter(function (l) { return l && l.charAt(0) !== '#' && l.charAt(0) !== '﻿'; });
+      if (lines.length < 100) throw new Error('行数が少なすぎます: ' + lines.length);
+      return (lines.length - 1) + ' 行';
+    });
+
+    must('結果PNGが作れる', function () {
+      if (!bPng) throw new Error('PNG が作られていません');
+      if (bPng.type !== 'image/png') throw new Error('種類が ' + bPng.type);
+      if (bPng.size < 3000) throw new Error('小さすぎます: ' + bPng.size);
+      return bPng.size.toLocaleString() + ' bytes';
+    });
+
+    URL.createObjectURL = realCreate; URL.revokeObjectURL = realRevoke;
+    HTMLAnchorElement.prototype.click = realClick;
+
+    document.getElementById('out').textContent =
+      log.join('\n') + '\n\n' +
+      (errs.length ? 'RESULT FAIL\n' + errs.join('\n') : 'RESULT PASS  ' + log.length + ' 項目');
+  }).catch(function (e) {
+    document.getElementById('out').textContent =
+      log.join('\n') + '\n\nRESULT FAIL\n' + e.message + '\n' + e.stack;
+  });
+})();
+</script>
+</body>
+</html>

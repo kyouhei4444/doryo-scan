@@ -1,0 +1,18 @@
+{
+  "name": "土量スキャナ",
+  "short_name": "土量スキャナ",
+  "description": "スマホのカメラで土砂の山や掘削した穴を点群にし、点高法で体積を求める現場用アプリ",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#4a3418",
+  "theme_color": "#4a3418",
+  "categories": ["utilities", "productivity"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
