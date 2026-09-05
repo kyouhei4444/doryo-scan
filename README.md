@@ -1,5 +1,12 @@
 # 土量スキャナ
 
+### ▶ 公開URL： https://kyouhei4444.github.io/doryo-scan/
+
+Android の Chrome で上記を開き、メニューの「アプリをインストール」または
+「ホーム画面に追加」を選ぶとホーム画面に入ります（項目名は Chrome の版によって異なります）。
+
+---
+
 Android のスマホカメラで、**平らな面に置いてある土砂の山**や**掘削した穴**を点群にして、
 **体積（土量）**を求める現場用アプリです。Android アプリストアを使わない **PWA（ブラウザアプリ）** として作ってあります。
 
@@ -166,8 +173,8 @@ L（ほぐし率）と C（締固め率）は土質で変わります。既定�
 
 | テスト | 走らせかた | 中身 |
 |--------|-----------|------|
-| 数値計算 | `test/verify.html` をブラウザで開く | 仮想カメラで撮った合成シーンの体積を理論値と比べる |
-| 描画と書き出し | `test/render.html` をブラウザで開く | 平面図・断面図が実際に描けているか、書き出したファイルの中身が合っているか |
+| 数値計算 | [test/verify.html](https://kyouhei4444.github.io/doryo-scan/test/verify.html) を開く | 仮想カメラで撮った合成シーンの体積を理論値と比べる |
+| 描画と書き出し | [test/render.html](https://kyouhei4444.github.io/doryo-scan/test/render.html) を開く | 平面図・断面図が実際に描けているか、書き出したファイルの中身が合っているか |
 | 画面の通し | `powershell -ExecutionPolicy Bypass -File test\run-flow.ps1` | ヘッドレスの Chrome で index.html の**本物のボタンを順に押し**、表示される数値を検算する |
 
 ### 数値計算（`test/verify.html`／全 26 項目 合格）
