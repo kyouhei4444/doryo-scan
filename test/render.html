@@ -15,12 +15,15 @@
 <h1>描画部のスモークテスト</h1>
 <canvas id="map"></canvas>
 <canvas id="sect"></canvas>
+<canvas id="v3d" style="width:420px;height:320px"></canvas>
 <pre id="out">実行中…</pre>
 
 <script src="../js/geom.js"></script>
 <script src="../js/grid.js"></script>
 <script src="../js/volume.js"></script>
+<script src="../js/mesh.js"></script>
 <script src="../js/render.js"></script>
+<script src="../js/view3d.js"></script>
 <script src="../js/exporter.js"></script>
 <script src="../js/scan.js"></script>
 <script>
@@ -120,6 +123,116 @@
     return '10m3(ほぐし) → 地山 ' + c.bank.toFixed(3) + ' / 締固め ' + c.comp.toFixed(3);
   });
 
+  /* ============================================================
+     3Dモデル
+     ============================================================ */
+  var solid = null, surf = null;
+
+  must('閉じた立体を作る', function () {
+    solid = Mesh.solidFromResult(res, { colorBy: 'height' });
+    if (!solid) throw new Error('作れませんでした');
+    if (!solid.triangleCount) throw new Error('面が0枚');
+    if (solid.normals.length !== solid.positions.length) throw new Error('法線の数が合いません');
+    if (solid.colors.length !== solid.positions.length) throw new Error('頂点色の数が合いません');
+    return solid.vertexCount.toLocaleString() + ' 頂点 / ' + solid.triangleCount.toLocaleString() + ' 三角形';
+  });
+
+  must('立体の体積が画面の体積と一致する', function () {
+    // 三角形から発散定理で出した体積 ＝ 点高法で出した体積 になるはず
+    var e = (solid.meshVolume - solid.reportedVolume) / solid.reportedVolume * 100;
+    if (Math.abs(e) > 1.0) {
+      throw new Error('立体 ' + solid.meshVolume.toFixed(4) + ' m3 と表示 ' + solid.reportedVolume.toFixed(4) + ' m3 が ' + e.toFixed(2) + '% ちがいます');
+    }
+    return solid.meshVolume.toFixed(4) + ' m3 ＝ ' + solid.reportedVolume.toFixed(4) + ' m3（差 ' + e.toFixed(2) + '%）';
+  });
+
+  must('立体が水密（穴が無い）こと', function () {
+    // すべての辺がちょうど2つの三角形に共有されていれば閉じている
+    var I = solid.indices, edge = new Map(), bad = 0;
+    for (var t = 0; t < I.length; t += 3) {
+      for (var k = 0; k < 3; k++) {
+        var a = I[t+k], b = I[t+(k+1)%3];
+        var key = a < b ? (a * 4294967296 + b) : (b * 4294967296 + a);
+        edge.set(key, (edge.get(key) || 0) + 1);
+      }
+    }
+    edge.forEach(function (v) { if (v !== 2) bad++; });
+    if (bad) throw new Error(bad + ' 本の辺が2面で共有されていません');
+    return edge.size.toLocaleString() + ' 本の辺すべてが2面で共有';
+  });
+
+  must('立体の高さと範囲が合っている', function () {
+    var b = solid.bounds;
+    if (Math.abs(b.h - res.main.hMax) > 0.06) {
+      throw new Error('高さ ' + b.h.toFixed(3) + ' が最大比高 ' + res.main.hMax.toFixed(3) + ' と合いません');
+    }
+    var want = Math.sqrt(res.main.area / Math.PI) * 2;   // 円とみなした直径
+    if (Math.abs(b.w - want) > want * 0.2) throw new Error('幅 ' + b.w.toFixed(2) + ' が想定 ' + want.toFixed(2) + ' と離れています');
+    return '高さ ' + b.h.toFixed(3) + ' m（最大比高 ' + res.main.hMax.toFixed(3) + '）/ 幅 ' + b.w.toFixed(2) + ' m';
+  });
+
+  must('点群から物体の表面を起こす', function () {
+    var cl = new VCloud(0.03, 200000);
+    // 一辺 0.6m の立方体の「表面」だけを点にする（中身は空＝実際のスキャンと同じ）
+    var L = 0.6, st = 0.012;
+    for (var a = -L/2; a <= L/2 + 1e-9; a += st) {
+      for (var b2 = -L/2; b2 <= L/2 + 1e-9; b2 += st) {
+        cl.add(a, b2 + 1, -L/2); cl.add(a, b2 + 1, L/2);
+        cl.add(-L/2, b2 + 1, a); cl.add(L/2, b2 + 1, a);
+        cl.add(a, 1 - L/2, b2); cl.add(a, 1 + L/2, b2);
+      }
+    }
+    surf = Mesh.surfaceFromCloud(cl, { voxel: 0.02, colorBy: 'none' });
+    if (!surf || surf.error) throw new Error(surf ? surf.error : '作れませんでした');
+    if (!surf.triangleCount) throw new Error('面が0枚');
+    var b = surf.bounds;
+    // 距離場を iso ぶん膨らませるので、実寸より iso×2 ほど大きくなる
+    var grow = b.w - L;
+    if (grow < 0 || grow > surf.iso * 2 + surf.voxel * 2) {
+      throw new Error('大きさ ' + b.w.toFixed(3) + ' が元の ' + L + ' からずれすぎ（+' + grow.toFixed(3) + '）');
+    }
+    if (Math.abs(b.w - b.h) > 0.03 || Math.abs(b.w - b.d) > 0.03) {
+      throw new Error('立方体なのに ' + b.w.toFixed(3) + '×' + b.h.toFixed(3) + '×' + b.d.toFixed(3));
+    }
+    return surf.vertexCount.toLocaleString() + ' 頂点 / ' + surf.triangleCount.toLocaleString() + ' 三角形 / '
+         + b.w.toFixed(3) + '×' + b.h.toFixed(3) + '×' + b.d.toFixed(3) + ' m（元 ' + L + ' m 立方体、膨らみ +'
+         + grow.toFixed(3) + ' m）';
+  });
+
+  must('表面メッシュが裏側まで回り込んでいる', function () {
+    // 立方体の6面ぶん、上下左右前後それぞれに法線が向いた三角形があるか
+    var N = surf.normals, dirs = [0,0,0,0,0,0];
+    for (var i = 0; i < N.length; i += 3) {
+      var x = N[i], y = N[i+1], z = N[i+2];
+      if (x >  0.8) dirs[0]++; if (x < -0.8) dirs[1]++;
+      if (y >  0.8) dirs[2]++; if (y < -0.8) dirs[3]++;
+      if (z >  0.8) dirs[4]++; if (z < -0.8) dirs[5]++;
+    }
+    var missing = dirs.filter(function (d) { return d < 10; }).length;
+    if (missing) throw new Error('6方向のうち ' + missing + ' 方向の面がありません: ' + dirs.join(','));
+    return '±X ' + dirs[0] + '/' + dirs[1] + '  ±Y ' + dirs[2] + '/' + dirs[3] + '  ±Z ' + dirs[4] + '/' + dirs[5];
+  });
+
+  must('3Dプレビューが動く', function () {
+    var cv = document.getElementById('v3d');
+    var v = new View3D(cv);
+    if (!v.ok) throw new Error('WebGL を初期化できません: ' + v.err);
+    v.setMesh(solid);
+    v.yaw = 1.1; v.pitch = 0.4; v.draw();
+    var gl = v.gl;
+    var px = new Uint8Array(cv.width * cv.height * 4);
+    gl.readPixels(0, 0, cv.width, cv.height, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    var cols = {}, bg = 0;
+    for (var k = 0; k < px.length; k += 4 * 13) {
+      var key = px[k] + ',' + px[k+1] + ',' + px[k+2];
+      cols[key] = 1;
+      if (px[k] === 238 && px[k+1] === 241) bg++;
+    }
+    var n = Object.keys(cols).length;
+    if (n < 10) throw new Error('描かれていないようです（' + n + ' 色）');
+    return n + ' 色を描画（' + cv.width + '×' + cv.height + '）';
+  });
+
   /* --- セッション開始の失敗を正しく見分けられるか（実機で出たエラー文で確認） --- */
   must('エラーの種類の見分け', function () {
     var E = Scanner._explain;
@@ -198,6 +311,9 @@
 
   function grab(fn) { caught.length = 0; fn(); return caught[0] || null; }
 
+  var bObj = grab(function () { Exporter.objMesh(solid, 'smoke'); });
+  var bStl = grab(function () { Exporter.stlMesh(solid, 'smoke'); });
+  var bGlb = grab(function () { Exporter.glbMesh(solid, 'smoke'); });
   var bGrid = grab(function () { Exporter.gridCsv(res, 'smoke'); });
   var bCloudCsv, bPly, bSect, bPng;
   var cloud = new VCloud(0.05, 100000);
@@ -217,9 +333,75 @@
   });
 
   pngDone.then(function () {
-    return Promise.all([bGrid.text(), bCloudCsv.text(), bPly.arrayBuffer(), bSect.text()]);
+    return Promise.all([bGrid.text(), bCloudCsv.text(), bPly.arrayBuffer(), bSect.text(),
+                        bObj.text(), bStl.arrayBuffer(), bGlb.arrayBuffer()]);
   }).then(function (r) {
     var gridTxt = r[0], cloudTxt = r[1], plyBuf = r[2], sectTxt = r[3];
+    var objTxt = r[4], stlBuf = r[5], glbBuf = r[6];
+
+    must('OBJ の頂点・面の数と頂点色', function () {
+      var v = 0, vn = 0, f = 0, first = null;
+      objTxt.split('\n').forEach(function (l) {
+        if (l.charAt(0) === '#') return;
+        if (l.indexOf('v ') === 0)  { if (!v) first = l.split(' '); v++; }
+        else if (l.indexOf('vn ') === 0) vn++;
+        else if (l.indexOf('f ') === 0)  f++;
+      });
+      if (v !== solid.vertexCount) throw new Error('v が ' + v + '（期待 ' + solid.vertexCount + '）');
+      if (vn !== solid.vertexCount) throw new Error('vn が ' + vn);
+      if (f !== solid.triangleCount) throw new Error('f が ' + f + '（期待 ' + solid.triangleCount + '）');
+      if (first.length !== 7) throw new Error('頂点色が付いていません: ' + first.join(' '));
+      if (Math.abs(parseFloat(first[1]) - solid.positions[0]) > 1e-3) throw new Error('1点目の X が違います');
+      return v.toLocaleString() + ' 頂点（色つき）/ ' + f.toLocaleString() + ' 面';
+    });
+
+    must('STL のバイト数と三角形数', function () {
+      var dv = new DataView(stlBuf);
+      var n = dv.getUint32(80, true);
+      if (n !== solid.triangleCount) throw new Error('宣言 ' + n + '（期待 ' + solid.triangleCount + '）');
+      if (stlBuf.byteLength !== 84 + n * 50) throw new Error('大きさ ' + stlBuf.byteLength + ' が合いません');
+      // 1枚目の法線が単位ベクトルか
+      var L = Math.hypot(dv.getFloat32(84, true), dv.getFloat32(88, true), dv.getFloat32(92, true));
+      if (Math.abs(L - 1) > 1e-3) throw new Error('法線の長さが ' + L.toFixed(4));
+      return n.toLocaleString() + ' 三角形 / ' + stlBuf.byteLength.toLocaleString() + ' bytes';
+    });
+
+    must('GLB の構造が glTF 2.0 として正しい', function () {
+      var dv = new DataView(glbBuf);
+      if (dv.getUint32(0, true) !== 0x46546C67) throw new Error('先頭が glTF ではありません');
+      if (dv.getUint32(4, true) !== 2) throw new Error('version が 2 ではありません');
+      if (dv.getUint32(8, true) !== glbBuf.byteLength) throw new Error('全体長が実ファイル長と違います');
+      var jLen = dv.getUint32(12, true);
+      if (dv.getUint32(16, true) !== 0x4E4F534A) throw new Error('JSON チャンクがありません');
+      if (jLen % 4) throw new Error('JSON チャンクが4バイト境界ではありません');
+      var j = JSON.parse(new TextDecoder().decode(new Uint8Array(glbBuf, 20, jLen)));
+      var bLen = dv.getUint32(20 + jLen, true);
+      if (dv.getUint32(24 + jLen, true) !== 0x004E4942) throw new Error('BIN チャンクがありません');
+      if (bLen % 4) throw new Error('BIN チャンクが4バイト境界ではありません');
+      if (20 + jLen + 8 + bLen !== glbBuf.byteLength) throw new Error('チャンク長の合計が合いません');
+      if (j.buffers[0].byteLength !== bLen) throw new Error('buffer の宣言長が BIN と違います');
+
+      var prim = j.meshes[0].primitives[0];
+      if (j.accessors[prim.indices].count !== solid.indices.length) throw new Error('indices の数が違います');
+      if (j.accessors[prim.attributes.POSITION].count !== solid.vertexCount) throw new Error('POSITION の数が違います');
+      if (j.accessors[prim.attributes.COLOR_0].componentType !== 5121 ||
+          !j.accessors[prim.attributes.COLOR_0].normalized) throw new Error('COLOR_0 の型が違います');
+      // bufferView が重なっていないか、BIN に収まっているか
+      j.bufferViews.forEach(function (v, i) {
+        if (v.byteOffset % 4) throw new Error('bufferView ' + i + ' が4バイト境界ではありません');
+        if (v.byteOffset + v.byteLength > bLen) throw new Error('bufferView ' + i + ' が BIN からはみ出しています');
+      });
+      // POSITION の min/max が実際の範囲と合っているか
+      var acc = j.accessors[prim.attributes.POSITION], b = solid.bounds;
+      if (Math.abs(acc.min[0] - b.x0) > 1e-4 || Math.abs(acc.max[1] - b.y1) > 1e-4) throw new Error('min/max が範囲と違います');
+      // BIN から1点目の座標を読み直す
+      var pv = j.bufferViews[prim.attributes.POSITION === 1 ? 1 : 0];
+      var px = new DataView(glbBuf, 28 + jLen + j.bufferViews[1].byteOffset).getFloat32(0, true);
+      if (Math.abs(px - solid.positions[0]) > 1e-4) throw new Error('BIN の1点目が違います');
+      return glbBuf.byteLength.toLocaleString() + ' bytes / accessor ' + j.accessors.length
+           + ' / bufferView ' + j.bufferViews.length + ' / 頂点色あり';
+    });
+
 
     // 格子CSV: 体積寄与の列を足し直して、表示している体積と一致するか
     must('格子CSV を足し直すと体積が一致する', function () {

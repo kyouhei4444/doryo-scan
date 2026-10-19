@@ -4,7 +4,7 @@
    圏外の現場でもそのまま動く。
    更新を早く反映したいときは APP_CACHE の版数を上げる。
    ============================================================ */
-var APP_CACHE = 'doryo-app-v1';
+var APP_CACHE = 'doryo-app-v2';
 
 var SHELL = [
   './',
@@ -13,8 +13,10 @@ var SHELL = [
   './js/geom.js',
   './js/grid.js',
   './js/volume.js',
+  './js/mesh.js',
   './js/scan.js',
   './js/render.js',
+  './js/view3d.js',
   './js/store.js',
   './js/exporter.js',
   './js/app.js',

@@ -160,6 +160,38 @@
     </div>
 
     <div class="card">
+      <div class="card-h">3Dモデル</div>
+      <div class="seg sm" id="seg-mesh">
+        <button data-v="solid" class="on">閉じた立体<span>体積の根拠になる</span></button>
+        <button data-v="surface">物体の表面<span>土以外もこちら</span></button>
+      </div>
+      <div id="mesh-opt-surface" class="hidden">
+        <label class="fld"><span>きめ細かさ <b id="lbl-mvox"></b>（細かいほど重くなります）</span>
+          <input type="range" id="rng-mvox" min="1" max="12" step="1"></label>
+        <label class="chk-l"><input type="checkbox" id="cf-mcrop" checked> 対象だけを切り出す（地面を含めない）</label>
+      </div>
+      <div class="row-btns">
+        <button id="btn-mesh" class="btn primary">3Dモデルを作る</button>
+        <button id="btn-mesh-fit" class="btn tiny">向きを戻す</button>
+      </div>
+      <div class="canvas-wrap" style="background:#eef1f4"><canvas id="view3d"></canvas></div>
+      <div id="mesh-info" class="note"></div>
+      <div class="row-btns">
+        <button id="btn-glb" class="btn" disabled>GLB</button>
+        <button id="btn-obj" class="btn" disabled>OBJ</button>
+        <button id="btn-stl" class="btn" disabled>STL</button>
+      </div>
+      <p class="note">
+        <b>GLB</b> は Windows の「3D ビューアー」やブラウザでそのまま開け、色も残ります。
+        <b>OBJ</b> は Blender・MeshLab・CloudCompare 向け。<b>STL</b> は CAD・3Dプリンタ向け（色なし）。<br>
+        「閉じた立体」は上面＝地表・底面＝基準面・側面＝法尻の壁で囲んだ水密な形で、
+        その体積は画面の体積と一致します。真上から見て高さが1つに決まる形しか作れません。<br>
+        「物体の表面」は点群から表面を起こすので、<b>側面や裏側のある物体</b>（機械・構造物・岩など）も形になります。
+        撮れていない面は穴が開くので、ぐるっと回って撮ってください。
+      </p>
+    </div>
+
+    <div class="card">
       <div class="card-h">保存・書き出し</div>
       <label class="fld"><span>名前</span><input type="text" id="in-name" placeholder="例）1号ヤード 残土 10/5"></label>
       <label class="fld"><span>メモ</span><input type="text" id="in-memo" placeholder="測定条件・立会者など"></label>
@@ -363,8 +395,10 @@
 <script src="js/geom.js"></script>
 <script src="js/grid.js"></script>
 <script src="js/volume.js"></script>
+<script src="js/mesh.js"></script>
 <script src="js/scan.js"></script>
 <script src="js/render.js"></script>
+<script src="js/view3d.js"></script>
 <script src="js/store.js"></script>
 <script src="js/exporter.js"></script>
 <script src="js/app.js"></script>

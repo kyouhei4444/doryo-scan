@@ -168,6 +168,44 @@
     });
   })
   .then(function () {
+    STEP = '7b 3Dモデル（閉じた立体）';
+    document.querySelector('#seg-mesh button[data-v="solid"]').click();
+    g('btn-mesh').click();
+    return wait(1500).then(function () {
+      var info = g('mesh-info').textContent;
+      say(info.indexOf('三角形') > 0, '3Dモデルができた: ' + info.split('\n')[0]);
+      var m = info.match(/立体としての体積 ([\d.]+) m³（画面の体積 ([\d.]+)/);
+      if (m) {
+        var e = (parseFloat(m[1]) - parseFloat(m[2])) / parseFloat(m[2]) * 100;
+        say(Math.abs(e) < 1, '立体の体積が画面の体積と一致: ' + m[1] + ' ＝ ' + m[2] + ' m³（差 ' + e.toFixed(2) + '%）');
+      } else { say(false, '体積の照合行が出ていません: ' + info); }
+      say(!g('btn-glb').disabled && !g('btn-obj').disabled && !g('btn-stl').disabled,
+          'GLB / OBJ / STL の書き出しボタンが押せる状態になった');
+    });
+  })
+  .then(function () {
+    STEP = '7c 3Dモデル（物体の表面）';
+    document.querySelector('#seg-mesh button[data-v="surface"]').click();
+    say(!g('mesh-opt-surface').classList.contains('hidden'), '表面モードの設定欄が出た');
+    g('btn-mesh').click();
+    return wait(2500).then(function () {
+      var info = g('mesh-info').textContent;
+      say(info.indexOf('三角形') > 0, '点群から表面を起こせた: ' + info.split('\n')[0]);
+      say(info.indexOf('格子') >= 0, info.split('\n')[2] || '');
+      // 結果を変えるとモデルは作り直しが要るので、いったん消えること
+      g('rng-thr').value = '6';
+      g('rng-thr').dispatchEvent(new Event('input'));
+      g('rng-thr').dispatchEvent(new Event('change'));
+      return wait(1200).then(function () {
+        say(g('btn-glb').disabled, '計算し直したら3Dモデルは作り直しになる（書き出しボタンが無効に戻る）');
+        g('rng-thr').value = '5';
+        g('rng-thr').dispatchEvent(new Event('input'));
+        g('rng-thr').dispatchEvent(new Event('change'));
+        return wait(1200);
+      });
+    });
+  })
+  .then(function () {
     STEP = '8 保存し直し';
     g('in-name').value = '通しテスト2';
     g('in-memo').value = '再計算後';

@@ -268,6 +268,7 @@
       });
     });
 
+    bindMesh();
     el('btn-save').addEventListener('click', saveCurrent);
     el('btn-png').addEventListener('click', exportPng);
     el('btn-ply').addEventListener('click', function () { if (cur) Exporter.ply(cur.cloud, nameOf()); });
@@ -287,6 +288,94 @@
         depthInfo: cur.depthInfo, scanStats: cur.scanStats
       }, nameOf());
     });
+  }
+
+  /* ============================================================
+     3Dモデル
+     ============================================================ */
+  var view3d = null, mesh = null;
+  var MVOX = [0.01, 0.015, 0.02, 0.025, 0.03, 0.04, 0.05, 0.06, 0.08, 0.10, 0.15, 0.20];
+
+  function bindMesh() {
+    view3d = new View3D(el('view3d'));
+    bindSeg('seg-mesh', function (v) {
+      Store.set('meshMode', v);
+      show(el('mesh-opt-surface'), v === 'surface');
+    });
+    el('rng-mvox').addEventListener('input', function () {
+      Store.set('meshVoxel', MVOX[+this.value - 1]);
+      el('lbl-mvox').textContent = (MVOX[+this.value - 1] * 100).toFixed(1) + ' cm';
+    });
+    el('cf-mcrop').addEventListener('change', function () { Store.set('meshCrop', this.checked); });
+    el('btn-mesh').addEventListener('click', buildMesh);
+    el('btn-mesh-fit').addEventListener('click', function () {
+      if (view3d && mesh) { view3d.fit(); view3d.draw(); }
+    });
+    el('btn-glb').addEventListener('click', function () { if (mesh) Exporter.glbMesh(mesh, nameOf()); });
+    el('btn-obj').addEventListener('click', function () { if (mesh) Exporter.objMesh(mesh, nameOf()); });
+    el('btn-stl').addEventListener('click', function () { if (mesh) Exporter.stlMesh(mesh, nameOf()); });
+  }
+
+  function setMeshButtons(on) {
+    ['btn-glb', 'btn-obj', 'btn-stl'].forEach(function (i) { el(i).disabled = !on; });
+  }
+
+  function clearMesh() {
+    mesh = null;
+    setMeshButtons(false);
+    el('mesh-info').textContent = '';
+    if (view3d) view3d.setMesh(null);
+  }
+
+  function buildMesh() {
+    if (!cur || !cur.res || cur.res.error) { toast('先に計測してください'); return; }
+    var mode = cfg.meshMode || 'solid';
+    el('mesh-info').textContent = '計算中…';
+    setMeshButtons(false);
+    // 画面に「計算中」を出してから重い処理に入る
+    setTimeout(function () {
+      var t0 = performance.now(), m;
+      try {
+        if (mode === 'solid') {
+          m = Mesh.solidFromResult(cur.res, { colorBy: 'height' });
+        } else {
+          var crop = null;
+          if (cfg.meshCrop !== false && cur.res.main) {
+            crop = { plane: cur.res.plane, dense: cur.res.dense, sel: cur.res.main.sel,
+                     sign: cur.res.main.sign, thr: cur.res.thr };
+          }
+          m = Mesh.surfaceFromCloud(cur.cloud, {
+            voxel: cfg.meshVoxel || 0.03, crop: crop, colorBy: 'height'
+          });
+        }
+      } catch (e) {
+        console.error(e);
+        el('mesh-info').textContent = '作れませんでした: ' + e.message;
+        return;
+      }
+      if (!m) { el('mesh-info').textContent = 'もとになるデータがありません。'; return; }
+      if (m.error) { el('mesh-info').textContent = m.error; return; }
+      if (!m.triangleCount) { el('mesh-info').textContent = '面が1枚もできませんでした。きめ細かさを粗くするか、撮り足してください。'; return; }
+
+      mesh = m;
+      var ms = Math.round(performance.now() - t0);
+      var info = [];
+      info.push('頂点 ' + m.vertexCount.toLocaleString('ja-JP')
+              + ' / 三角形 ' + m.triangleCount.toLocaleString('ja-JP') + '（' + ms + ' ms）');
+      var b = m.bounds;
+      info.push('大きさ 幅 ' + b.w.toFixed(2) + ' × 高さ ' + b.h.toFixed(2) + ' × 奥行 ' + b.d.toFixed(2) + ' m');
+      if (m.kind === 'solid') {
+        info.push('立体としての体積 ' + fmt(m.meshVolume) + ' m³（画面の体積 ' + fmt(m.reportedVolume) + ' m³）');
+      } else {
+        info.push('格子 ' + (m.voxel * 100).toFixed(1) + ' cm（' + m.gridSize + '）／使った点 ' + m.usedPoints.toLocaleString('ja-JP'));
+        if (m.scaledDown) info.push('※ 範囲が広いため、きめ細かさを自動で粗くしました。');
+      }
+      if (view3d && !view3d.ok) info.push('※ この端末では3Dプレビューを表示できません（書き出しは可能です）。');
+      el('mesh-info').textContent = info.join('\n');
+      el('mesh-info').style.whiteSpace = 'pre-line';
+      setMeshButtons(true);
+      if (view3d) view3d.setMesh(m);
+    }, 30);
   }
 
   function nameOf() {
@@ -313,6 +402,7 @@
       plane: cur.planeMode === 'manual' ? cur.manualPlane : null
     };
     cur.opts = opts;
+    clearMesh();                 // 結果が変わったら作り直しが要る
     var res;
     try { res = Volume.compute(cur.grid, opts); }
     catch (e) { console.error(e); res = { error: '計算中にエラーが出ました: ' + e.message }; }
@@ -539,6 +629,17 @@
     el('cf-closing').checked = !!cfg.closing;
     el('sel-measured').value = cfg.measuredAs;
     el('in-L').value = cfg.L; el('in-C').value = cfg.C; el('in-dump').value = cfg.dumpCap;
+
+    // 3Dモデル
+    var mv = MVOX.indexOf(cfg.meshVoxel);
+    if (mv < 0) mv = MVOX.indexOf(0.03);
+    el('rng-mvox').value = mv + 1;
+    el('lbl-mvox').textContent = (MVOX[mv] * 100).toFixed(1) + ' cm';
+    el('cf-mcrop').checked = cfg.meshCrop !== false;
+    var mb = el('seg-mesh').querySelector('button[data-v="' + (cfg.meshMode || 'solid') + '"]');
+    Array.prototype.forEach.call(el('seg-mesh').querySelectorAll('button'),
+      function (o) { o.classList.toggle('on', o === mb); });
+    show(el('mesh-opt-surface'), (cfg.meshMode || 'solid') === 'surface');
     var sb = el('seg-side').querySelector('button[data-v="' + cfg.side + '"]');
     if (sb) Array.prototype.forEach.call(el('seg-side').querySelectorAll('button'),
       function (o) { o.classList.toggle('on', o === sb); });

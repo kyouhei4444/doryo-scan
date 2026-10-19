@@ -37,6 +37,11 @@
     C: 0.90,             // 締固め率
     dumpCap: 4.0,        // ダンプ1台の積載量(m3, ほぐし土量)
 
+    // --- 3Dモデル ---
+    meshMode:  'solid',  // solid=閉じた立体 / surface=物体の表面
+    meshVoxel: 0.03,     // 表面を起こすときの格子間隔(m)
+    meshCrop:  true,     // 対象だけ切り出す（地面を含めない）
+
     keepAwake: true
   };
 
