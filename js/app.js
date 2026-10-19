@@ -163,8 +163,13 @@
     scanner.on.note = function (m) { arToast(m, 4000); };
     scanner.on.error = function (m) {
       show(ov, false);
-      el('start-err').textContent = m;
-      show(el('start-err'), true);
+      var box = el('start-err');
+      box.innerHTML = esc(m).replace(/\n/g, '<br>')
+        + '<div style="margin-top:10px">'
+        + '<a href="https://developers.google.com/ar/devices" target="_blank" rel="noopener">'
+        + 'ARCore 対応端末の一覧を見る（Supports Depth API と書かれた機種が必要です）</a></div>';
+      show(box, true);
+      box.scrollIntoView({ block: 'center', behavior: 'smooth' });
     };
     scanner.on.end = function () {
       show(ov, false);

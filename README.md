@@ -68,8 +68,23 @@ git push -u origin main
 ## 3. 動く端末
 
 **ARCore に対応し、かつ ARCore の Depth API に対応している Android 端末**が必要です。
+この 2 つは別物で、「AR は動くが深度が取れない」機種もあります。
 
-- 対応端末は [Google の一覧](https://developers.google.com/ar/devices) で確認できます（Depth API の列を見てください）
+- 対応端末は [Google の一覧](https://developers.google.com/ar/devices) で確認します。
+  **備考欄に `Supports Depth API` と書かれている機種**だけが使えます（一覧に載っていない機種は AR 自体が動きません）
+- 開始に失敗した場合、アプリが「ARCore 非対応」か「AR は動くが深度が無い」かを判定して日本語で表示します
+
+#### 実機での確認結果
+
+| 端末 | 結果 |
+|------|------|
+| Xperia（au SOG16） | **動作OK** |
+| 京セラ DuraForce PRO 2 | **使用不可**。ARCore 対応端末一覧に無い機種のため、AR セッション自体が開始できない |
+
+現場用の防水防塵端末でこのアプリを使いたい場合、一覧に `Supports Depth API` 付きで載っている京セラ機は
+**DuraForce PRO 3 / DuraForce EX / DuraForce EX2 / TORQUE G07 / TORQUE G06 / TORQUE 5G** などです
+（DuraForce PRO **2** と Duraforce Ultra 5G は対象外）。導入前に必ず最新の一覧で確認してください。
+
 - **ToF センサーは無くても動きます。**その場合はカメラを動かした視差から深度を作ります（depth-from-motion）。ただし精度は落ちます
 - ToF／LiDAR 相当のセンサーがある機種（Galaxy S20 Ultra、Note10+、Pixel 8 Pro など）では、はっきり精度が上がります
 - iPhone は WebXR に対応していないため**使えません**

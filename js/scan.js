@@ -166,34 +166,157 @@
     this.plane = null;
     this.stats = { pts: 0, cells: 0, frames: 0, valid: 0, tried: 0, fps: 0, elapsed: 0, cloud: 0, dropFast: 0 };
 
+    return this._ladder();
+  };
+
+  /* ---------- セッションの開き方を順に試す ----------
+     端末によって受け取れる深度の形がちがうので、厳しい条件から順に緩めていく。
+     最後の 1 本は深度を「任意」にして開き、session.enabledFeatures を読む。
+     これで「ARCore 自体が動かない」のか「AR は動くが深度が無い」のかが確定する。 */
+  var LADDER = [
+    { tag: 'CPU用の深度を必須で要求',   req: true,  usage: ['cpu-optimized'] },
+    { tag: 'GPU用の深度も許して要求',   req: true,  usage: ['cpu-optimized', 'gpu-optimized'] },
+    { tag: '深度を任意にして開く',       req: false, usage: ['cpu-optimized', 'gpu-optimized'] }
+  ];
+
+  Scanner.prototype._initFor = function (rung) {
     var init = {
-      requiredFeatures: ['depth-sensing'],
+      requiredFeatures: rung.req ? ['depth-sensing'] : [],
       optionalFeatures: ['hit-test', 'local-floor', 'anchors', 'light-estimation'],
       depthSensing: {
-        // frame.getDepthInformation() は CPU 最適化の深度でないと例外になる。
-        // GPU 版をもらっても読めないので、はじめから CPU 版だけを頼む。
-        usagePreference: ['cpu-optimized'],
-        dataFormatPreference: ['luminance-alpha', 'float32', 'unsigned-short'],
-        depthTypeRequest: this.cfg.depthType === 'raw' ? ['raw', 'smooth'] : ['smooth', 'raw']
+        // frame.getDepthInformation() は CPU 最適化の深度でないと例外になる
+        usagePreference: rung.usage,
+        dataFormatPreference: ['luminance-alpha', 'float32', 'unsigned-short']
       }
     };
+    if (!rung.req) init.optionalFeatures.push('depth-sensing');
+    // depthTypeRequest は対応していない版の Chrome があるので、生深度を選んだときだけ付ける
+    if (this.cfg.depthType === 'raw') init.depthSensing.depthTypeRequest = ['raw', 'smooth'];
     if (this.cfg.overlay) {
       init.optionalFeatures.push('dom-overlay');
       init.domOverlay = { root: this.cfg.overlay };
     }
+    return init;
+  };
 
-    return navigator.xr.requestSession('immersive-ar', init)
-      .then(function (s) { return self._setup(s); })
-      .catch(function (e) {
-        var msg = String(e && e.message || e);
-        if (/depth/i.test(msg) || /NotSupported/i.test(msg)) {
-          msg = 'この端末では深度センシング（depth-sensing）が使えませんでした。\n'
-              + 'ARCore の深度に対応していない機種か、Google Play開発者サービス(AR) が古い可能性があります。\n'
-              + '（元のエラー: ' + msg + '）';
-        }
-        self.emit('error', msg);
-        throw e;
-      });
+  /* 開いたセッションから、使える深度が本当に来ているかを確かめる */
+  function depthCheck(s) {
+    var feats = s.enabledFeatures;
+    if (feats && feats.indexOf && feats.indexOf('depth-sensing') < 0) {
+      return { ok: false, kind: 'nodepth' };
+    }
+    if (!s.depthUsage) return { ok: false, kind: 'nodepth' };
+    if (s.depthUsage !== 'cpu-optimized') return { ok: false, kind: 'gpuonly', usage: s.depthUsage };
+    return { ok: true };
+  }
+
+  /* エラーの種類を見分ける。name と message の両方を見る
+     （"The specified session configuration is not supported." は
+       message に NotSupported という字が入らないので name が頼り） */
+  function explain(e) {
+    var name = (e && e.name) || '';
+    var raw = String((e && e.message) || e || '');
+    var low = raw.toLowerCase();
+    var kind = 'other';
+    if (name === 'NotSupportedError' || low.indexOf('not supported') >= 0) kind = 'unsupported';
+    else if (name === 'SecurityError' || low.indexOf('user activation') >= 0 || low.indexOf('gesture') >= 0) kind = 'activation';
+    else if (name === 'NotAllowedError' || low.indexOf('permission') >= 0 || low.indexOf('denied') >= 0) kind = 'denied';
+    else if (name === 'InvalidStateError') kind = 'state';
+    return { kind: kind, name: name, raw: raw };
+  }
+
+  Scanner.prototype._ladder = function () {
+    var self = this;
+    if (this._rung === undefined || this._rung >= LADDER.length) this._rung = 0;
+    if (!this.tryLog || this._rung === 0) this.tryLog = [];
+
+    function attempt() {
+      if (self._rung >= LADDER.length) {
+        self._rung = 0;
+        return Promise.reject({ ladder: true, log: self.tryLog });
+      }
+      var rung = LADDER[self._rung];
+      return navigator.xr.requestSession('immersive-ar', self._initFor(rung))
+        .then(function (s) {
+          var d = depthCheck(s);
+          self.tryLog.push({ tag: rung.tag, ok: d.ok, note: d.ok ? '成功' : d.kind,
+                             feats: (s.enabledFeatures ? Array.prototype.slice.call(s.enabledFeatures).join(' ') : '(不明)') });
+          if (d.ok) { self.openedWith = rung.tag; self._rung = 0; return self._setup(s); }
+          // 深度が無いセッション。原因の切り分けだけして閉じる
+          self.noDepthFacts = {
+            kind: d.kind, usage: s.depthUsage || null,
+            feats: s.enabledFeatures ? Array.prototype.slice.call(s.enabledFeatures) : null
+          };
+          return Promise.resolve(s.end()).catch(function () {}).then(function () {
+            self._rung++;
+            return attempt();
+          });
+        })
+        .catch(function (e) {
+          if (e && e.ladder) throw e;                      // 下の階層から上がってきた最終結果
+          var ex = explain(e);
+          self.tryLog.push({ tag: rung.tag, ok: false, note: ex.kind, raw: ex.raw, name: ex.name });
+          if (ex.kind === 'activation' || ex.kind === 'denied') {
+            self._rung++;                                  // 次はここから。タップし直してもらう
+            return Promise.reject({ ladder: true, log: self.tryLog, stop: ex, resume: true });
+          }
+          self._rung++;
+          return attempt();
+        });
+    }
+
+    return attempt().catch(function (err) {
+      self.emit('error', self._diagnosis(err));
+      throw err;
+    });
+  };
+
+  /* 全部だめだったときに出す説明文 */
+  Scanner.prototype._diagnosis = function (err) {
+    var L = [];
+    if (err && err.stop && err.stop.kind === 'denied') {
+      return 'カメラの使用が許可されませんでした。\n'
+           + 'Chrome の 画面左上の鍵マーク → サイトの設定 → カメラ を「許可」にしてから、もう一度お試しください。';
+    }
+    if (err && err.resume) {
+      return '画面の操作からの経過時間が切れました。もう一度「スキャンを開始」を押してください。\n'
+           + '（残りの設定で続きから試します）';
+    }
+
+    var f = this.noDepthFacts;
+    if (f && f.kind === 'gpuonly') {
+      L.push('この端末からは GPU 用の深度（' + f.usage + '）しか受け取れませんでした。');
+      L.push('このアプリは画素ごとの距離を CPU で読む方式なので、この形では計算できません。');
+    } else if (f && f.kind === 'nodepth') {
+      L.push('【判定】AR は動きますが、この端末は ARCore の深度（Depth API）に対応していません。');
+      L.push('');
+      L.push('カメラまでの距離が 1 点も取れないため、体積の計測はできません。');
+      L.push('Google の ARCore 対応端末一覧で「Supports Depth API」と書かれた機種が必要です。');
+      if (f.feats) L.push('（この端末で使えた機能: ' + f.feats.join(' / ') + '）');
+    } else {
+      L.push('【判定】この端末では AR セッションを開始できませんでした。');
+      L.push('');
+      L.push('ARCore 非対応の機種か、「Google Play開発者サービス(AR)」が未インストール／古い可能性があります。');
+      L.push('Play ストアで「Google Play Services for AR」を検索し、入っていなければ入れて、');
+      L.push('入っていれば更新してから、もう一度お試しください。');
+    }
+    L.push('');
+    L.push('― 試した設定 ―');
+    (this.tryLog || []).forEach(function (t, i) {
+      L.push((i + 1) + '. ' + t.tag + ' … ' + (t.ok ? '成功' : NOTE[t.note] || t.note)
+           + (t.raw ? '（' + t.raw + '）' : ''));
+    });
+    return L.join('\n');
+  };
+
+  var NOTE = {
+    unsupported: 'この設定には対応していない',
+    nodepth: 'セッションは開いたが深度が無い',
+    gpuonly: 'GPU用の深度しか来ない',
+    activation: '画面操作からの時間切れ',
+    denied: '許可されなかった',
+    state: '状態が不正',
+    other: '不明なエラー'
   };
 
   Scanner.prototype._setup = function (session) {
@@ -266,17 +389,13 @@
         self.prevCam = null; self.prevCamT = 0;
 
         // 実際にもらえた深度の種類を記録して知らせる（機種ごとの当たり外れの手がかり）
+        // 使える深度かどうかは _ladder() の depthCheck() で確認済み
         self.depthInfo = {
           usage: session.depthUsage || '(不明)',
           format: session.depthDataFormat || '(不明)',
-          type: session.depthActiveType || '(不明)'
+          type: session.depthActiveType || '(不明)',
+          openedWith: self.openedWith || '(不明)'
         };
-        if (session.depthUsage && session.depthUsage !== 'cpu-optimized') {
-          self.emit('error', 'この端末からは GPU 用の深度（' + session.depthUsage + '）しか受け取れず、'
-            + 'このアプリの計算方式では読み取れません。');
-          session.end();
-          return session;
-        }
         self.emit('note', '深度: ' + self.depthInfo.type + ' / ' + self.depthInfo.format
           + '　ゆっくり動かして、まず地面を広めに映してください。', 5000);
 
@@ -553,6 +672,10 @@
   // シェーダは実機の AR でしか動かない部分なので、
   // せめてコンパイルが通るかを test/render.html から確かめられるように出しておく
   Scanner.SHADERS = { VS: VS, FS: FS, compile: compile };
+  // エラーの見分けは実機でしか起きない経路なので、test から直接叩けるようにしておく
+  Scanner._explain = explain;
+  Scanner._depthCheck = depthCheck;
+  Scanner._LADDER = LADDER;
 
   global.Scanner = Scanner;
 })(window);

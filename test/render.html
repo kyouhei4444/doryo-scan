@@ -120,6 +120,46 @@
     return '10m3(ほぐし) → 地山 ' + c.bank.toFixed(3) + ' / 締固め ' + c.comp.toFixed(3);
   });
 
+  /* --- セッション開始の失敗を正しく見分けられるか（実機で出たエラー文で確認） --- */
+  must('エラーの種類の見分け', function () {
+    var E = Scanner._explain;
+    var cases = [
+      // 実機(京セラ DuraForce PRO2)で実際に出た文。message に NotSupported の字が無い
+      [{ name: 'NotSupportedError', message: 'The specified session configuration is not supported.' }, 'unsupported'],
+      [{ name: '', message: 'The specified session configuration is not supported.' }, 'unsupported'],
+      [{ name: 'NotSupportedError', message: '' }, 'unsupported'],
+      [{ name: 'SecurityError', message: 'requires user activation' }, 'activation'],
+      [{ name: 'NotAllowedError', message: 'Permission denied' }, 'denied'],
+      [{ name: 'InvalidStateError', message: '' }, 'state'],
+      [{ name: 'TypeError', message: 'なにか別の失敗' }, 'other']
+    ];
+    var bad = [];
+    cases.forEach(function (c) {
+      var got = E(c[0]).kind;
+      if (got !== c[1]) bad.push('"' + (c[0].name || '-') + '/' + (c[0].message || '-') + '" → ' + got + '（期待 ' + c[1] + '）');
+    });
+    if (bad.length) throw new Error(bad.join(' ／ '));
+    return cases.length + ' 通りすべて正しく分類';
+  });
+
+  must('深度が使えるかの判定', function () {
+    var D = Scanner._depthCheck;
+    var t = [
+      [{ enabledFeatures: ['depth-sensing', 'hit-test'], depthUsage: 'cpu-optimized' }, true, null],
+      [{ enabledFeatures: ['hit-test'], depthUsage: null }, false, 'nodepth'],
+      [{ enabledFeatures: ['depth-sensing'], depthUsage: 'gpu-optimized' }, false, 'gpuonly'],
+      [{ depthUsage: 'cpu-optimized' }, true, null],
+      [{ }, false, 'nodepth']
+    ];
+    var bad = [];
+    t.forEach(function (c, i) {
+      var r = D(c[0]);
+      if (r.ok !== c[1] || (!c[1] && r.kind !== c[2])) bad.push('#' + (i + 1) + ' → ' + JSON.stringify(r));
+    });
+    if (bad.length) throw new Error(bad.join(' ／ '));
+    return t.length + ' 通りすべて正しく判定（' + Scanner._LADDER.length + ' 段の設定を順に試す）';
+  });
+
   /* --- AR の描画シェーダ（実機でしか動かない部分）だけでもコンパイルを確かめる --- */
   must('ARシェーダのコンパイルとリンク', function () {
     var c = document.createElement('canvas');
@@ -147,7 +187,12 @@
   var caught = [];
   var realCreate = URL.createObjectURL, realRevoke = URL.revokeObjectURL;
   var realClick = HTMLAnchorElement.prototype.click;
-  URL.createObjectURL = function (b) { caught.push(b); return 'blob:stub-' + caught.length; };
+  var onBlob = null;   // 非同期(toBlob)の書き出しを、時間で待たずに受け止めるための受け口
+  URL.createObjectURL = function (b) {
+    caught.push(b);
+    if (onBlob) { var f = onBlob; onBlob = null; f(b); }
+    return 'blob:stub-' + caught.length;
+  };
   URL.revokeObjectURL = function () {};
   HTMLAnchorElement.prototype.click = function () {};
 
@@ -165,8 +210,10 @@
 
   var pngDone = new Promise(function (done) {
     caught.length = 0;
+    // toBlob は実時間で動くので、待ち時間で区切らず「出来たら進む」にする
+    onBlob = function (b) { bPng = b; done(); };
     Exporter.png(document.getElementById('map'), ['行1', '行2', '行3'], 'テスト', 'smoke');
-    setTimeout(function () { bPng = caught[0] || null; done(); }, 400);
+    setTimeout(function () { if (!bPng) { onBlob = null; bPng = caught[0] || null; done(); } }, 10000);
   });
 
   pngDone.then(function () {
